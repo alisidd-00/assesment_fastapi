@@ -3,6 +3,14 @@ import base64
 import tempfile
 import shutil
 from fastapi.testclient import TestClient
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path in case pytest doesn't add it
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from main import app
 from database import engine, Base
 
@@ -80,13 +88,17 @@ def test_atomic_cleanup_on_metadata_failure(tmp_path, monkeypatch):
     def fake_get_db():
         return DummyDB()
 
-    main_module.get_db = fake_get_db
+    # Override FastAPI dependency so the route receives our DummyDB
+    main_module.app.dependency_overrides[main_module.get_db] = fake_get_db
 
     token = os.environ.get("AUTH_TOKEN", "secret-token")
     payload = {"id": "will-cleanup", "data": base64.b64encode(b"cleanup").decode('utf-8')}
 
     r = client.post("/v1/blobs", json=payload, headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 500
+
+    # Remove dependency override to avoid affecting other tests
+    main_module.app.dependency_overrides.pop(main_module.get_db, None)
 
     import hashlib
     name = hashlib.sha256(payload["id"].encode("utf-8")).hexdigest()
